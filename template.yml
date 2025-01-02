@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM
+
+Resources:
+
+  MyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Runtime: dotnet8
+      Architectures:
+        - x86_64    
+      Handler: MyLambda::MyLambda.Function::FunctionHandler
+      CodeUri: ./src/MyLambda/
+      AutoPublishAlias: prod
+      DeploymentPreference:
+        Type: Linear10PercentEvery10Minutes
+        Alarms:
+          - !Ref MyAlarm
+        Hooks:
+          PreTraffic: !Ref PreTrafficLambdaFunction
+          PostTraffic: !Ref PostTrafficLambdaFunction
+      Events:
+        get:
+          Type: Api
+          Properties:
+            Path: /version
+            Method: get
+
+  MyAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmDescription: Lambda Function Error > 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Resource
+          Value: !Sub "${MyFunction}:prod"
+        - Name: FunctionName
+          Value: !Ref MyFunction
+        - Name: ExecutedVersion
+          Value: !GetAtt MyFunction.Version.Version
+      EvaluationPeriods: 2
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+
+  PreTrafficLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      MemorySize: 512
+      Handler: MyLambda::MyLambda.Function::PreFunctionHandler
+      CodeUri: ./src/MyLambda/
+      FunctionName: 'CodeDeployHook_preTrafficHook'
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "codedeploy:PutLifecycleEventHookExecutionStatus"
+            Resource:
+              !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*'
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "lambda:InvokeFunction"
+            Resource: !Ref MyFunction.Version
+      Runtime: dotnet8
+      Architectures:
+        - x86_64   
+      DeploymentPreference:
+        Enabled: False
+      Environment:
+        Variables:
+          TARGET: !Ref MyFunction.Version
+
+  PostTrafficLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      MemorySize: 512
+      Handler: MyLambda::MyLambda.Function::PostFunctionHandler
+      CodeUri: ./src/MyLambda/
+      FunctionName: 'CodeDeployHook_postTrafficHook'
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "codedeploy:PutLifecycleEventHookExecutionStatus"
+            Resource:
+              !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*'
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "lambda:InvokeFunction"
+            Resource: !GetAtt MyFunction.Arn
+      Runtime: dotnet8
+      Architectures:
+        - x86_64    
+      DeploymentPreference:
+        Enabled: False
+      Environment:
+        Variables:
+          TARGET: !GetAtt MyFunction.Arn
+
+Outputs:
+  MyApiEndpoint:
+    Description: "API endpoint"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/version"
